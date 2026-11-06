@@ -2,7 +2,7 @@
 
 use core::arch::global_asm;
 
-use super::{complete, decode, Syscall};
+use super::{complete, decode, SyscallRequest};
 use crate::arch::trap::{
     cause::{ExceptionCause, TrapCause},
     run_user, TrapContext,
@@ -49,6 +49,38 @@ pub fn assert_rejected(context: &mut TrapContext) {
     );
 }
 
+fn assert_completion_boundary(context: &mut TrapContext) {
+    let pc = context.pc();
+    let registers = *context.registers();
+    let metadata = (
+        context.raw_status(),
+        context.raw_cause(),
+        context.bad_addr(),
+    );
+    // 只修改已捕获的 syscall 现场，不实际执行这些机器字边界地址。
+    context.set_pc(usize::MAX - 7);
+    assert!(complete(context, -38));
+    assert_eq!(context.pc(), usize::MAX - 3);
+    let boundary_registers = *context.registers();
+    assert!(
+        !complete(context, 7),
+        "syscall PC overflow must be rejected"
+    );
+    assert_eq!(context.pc(), usize::MAX - 3);
+    assert_eq!(context.registers(), &boundary_registers);
+    assert_eq!(
+        (
+            context.raw_status(),
+            context.raw_cause(),
+            context.bad_addr()
+        ),
+        metadata,
+    );
+    // 恢复真实探针现场，后续继续执行终止 breakpoint。
+    context.set_pc(pc);
+    *context.registers_mut() = registers;
+}
+
 /// 执行三次连续用户 syscall，验证完整参数、结果可见性和异常拒绝。
 ///
 /// # Safety
@@ -85,7 +117,7 @@ pub unsafe fn kernel_test(user_entry: usize, stack: usize) {
             context.raw_cause(),
             context.bad_addr(),
         );
-        assert_eq!(decode(&context), Some(Syscall { number, args }));
+        assert_eq!(decode(&context), Some(SyscallRequest { number, args }));
         assert_eq!(context.registers(), &registers);
         assert_eq!(context.pc(), pc);
         assert!(complete(&mut context, result));
@@ -105,6 +137,7 @@ pub unsafe fn kernel_test(user_entry: usize, stack: usize) {
         // 证明用户观察到了结果、其余参数未被破坏，且 PC 没有停留在原 syscall。
         args[5] = result as usize;
     }
+    assert_completion_boundary(&mut context);
     // SAFETY: 最后一次完成后继续执行固定探针，必须到达终止 breakpoint。
     unsafe { run_user(&mut context) };
     assert_eq!(

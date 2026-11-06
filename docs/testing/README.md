@@ -76,6 +76,7 @@ LoongArch 的 Rust 可调用汇编函数提供 ELF `FUNC` 类型和函数大小�
 - 固定用户探针连续执行三次 syscall，检查调用号和全部六个参数，包含高 32 位非零、最高位为一及负数的原始机器字。
 - 正常返回仅修改 a0 和 PC，保留其余整数寄存器及异常元数据；用户将超过 32 位的成功值和负 errno 复制到下一次调用参数，验证实际可见结果和四字节 PC 推进，最后到达指定 breakpoint。
 - 非 syscall 的 breakpoint、内核 syscall，以及 LoongArch 带残留 syscall Ecode 的 refill 均被拒绝，且现场不变。内核 syscall 和残留 Ecode 场景使用构造的现场检查，不实际触发致命内核异常。
+- 在已捕获的用户 syscall 现场上构造 PC 边界：可表示的四字节推进成功，溢出时拒绝完成并保持 PC、整数寄存器及异常信息不变；不实际执行边界地址。
 
 成功时额外输出 `<架构>: syscall ABI tests passed`，全部套件完成仍以总成功标记为准。
 
