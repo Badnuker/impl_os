@@ -25,7 +25,7 @@ just test rv debug   # 运行 RISC-V (debug) 自检
 ### 组织方式与设计约定
 
 - **零生产侵入**：`ktest` 仅在启用 `--features ktest` 时参与编译。正常启动流程完成日志、Trap 和内存分配器初始化后，将 `FrameAllocator` 的共享引用传给 `ktest::run(&frames)`。
-- **目录与白盒访问**：所有测试代码与专用汇编探针统一存放在 `os/src/ktest/` 下（按 `arch/`、`boot/`、`mm/`、`syscall/`、`task/` 分类），再由被测模块通过 `#[cfg(feature = "ktest")] #[path = "..."] mod tests;` 挂载。这样既保持了业务源码目录的整洁，又允许测试直接访问模块内部私有项。
+- **目录与白盒访问**：所有测试代码与专用汇编探针统一存放在 `os/src/ktest/` 下，按被测模块组织，再由被测模块通过 `#[cfg(feature = "ktest")] #[path = "..."] mod tests;` 挂载。这样既保持了业务源码目录的整洁，又允许测试直接访问模块内部私有项。
 - **顺序执行与状态恢复**：`ktest::run` 按 `SUITES` 数组顺序依次执行各测试套件。每个套件在返回前必须恢复临时修改的硬件状态（如 LoongArch 的 `DMW1` 窗口）并归还借用的物理页框。任何断言失败都会直接触发内核 panic 并停机；只有全部套件通过才会打印最终的 `<arch>: all kernel tests passed`。
 - **注意 LoongArch 退出方式**：LoongArch 尚未实现主动关机，打印 `loongarch64: all kernel tests passed` 后会停在 `idle` 循环（需按 `Ctrl-a x` 退出）。判断自检是否通过必须以串口输出的成功标记为准，不能仅看 QEMU 是否退出。
 
@@ -69,6 +69,11 @@ just test rv debug   # 运行 RISC-V (debug) 自检
   - 在 128 字与 8192 字的合成位图上进行 5000 轮稀疏回收与重分配压测，确认 `nonempty` 索引栈不产生重复项、不重分配堆内存且容量完全恢复。
 - **`FDT memory` & `boot FDT mapping`**：使用 [`os/src/ktest/support/fdt.rs`](../../os/src/ktest/support/fdt.rs) 独立编码生成的测试设备树，验证多段 RAM、`1`/`2` cell 宽度、`status = "disabled"` 节点跳过、`initrd` 保留、FDT 本体物理区间保留，对截断、块重叠、非法魔数/版本、动态保留区、超深嵌套（> 32 层）的错误拦截，以及对整份 DTB 逐字节按位取反（`^= 0xff`）时解析器绝不 panic。
 - **`boot tables`（仅 LoongArch）**：在合成的字节数组上验证 EFI 系统表签名、乱序 GUID 查找（FDT 与 initrd）、重复/缺失表项报错、地址越界拦截以及 `DMW0` 映射地址转换。
+
+### 3.4 用户程序装载准备测试（`ELF64`、`initial user stack`）
+
+- **`ELF64`**：使用手工编码的最小 RISC-V / LoongArch ELF64 镜像，验证双架构机器号匹配与跨架构拒绝、多加载段数据切片与页内偏移、跨页 BSS 清零范围、权限位、空段与纯 BSS 段处理、入口指令对齐差异（RISC-V 允许 2 字节、LoongArch 要求 4 字节），以及 `PT_PHDR` 的优先选择与非法声明（重复、晚于 `PT_LOAD`、尺寸不符、被 BSS 截断）。同时覆盖坏魔数、非 64 位/大端/非 `ET_EXEC`/`PT_INTERP`、`PN_XNUM`、偏移未对齐、文件越界、乱序段、仅在页级重叠的加载段以及向上取整至页边界时的地址溢出。
+- **`initial user stack`**：验证非对齐栈顶下的 64 位字布局（`argc`、`argv`/`envp` 指针与空终止符、`auxv` 顺序与 `(AT_NULL, 0)`）、用户虚拟地址换算、字符串内容、零填充对齐区与 16 字节对齐的最终 `sp`；覆盖恰好匹配与差 1 字节的边界容量、空列表与空字符串，以及基址下溢、内嵌 `\0` 和传入 `AT_NULL` 等错误路径，并确认失败时缓冲区保持原样、成功时不改动 `sp` 以下区域。
 
 ---
 
