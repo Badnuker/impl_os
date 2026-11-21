@@ -15,8 +15,8 @@
 | `trap` | `os/src/trap.rs` | 共享的内核态异常处理入口 `handle_kernel`。用户态 Trap 直接从 `arch::trap::run_user` 返回给调用者；内核态未预期 Trap 则在此打印现场并 panic。 |
 | `syscall` | `os/src/syscall.rs` | Linux 系统调用解码、分发与返回写回。目前已接入 `exit`（93）和 `exit_group`（94），其余调用号返回 `-ENOSYS`（-38）。 |
 | `task` | `os/src/task.rs` | 最小用户任务封装 `Task`。持有一个 `TrapContext`，在当前内核栈上同步循环调用 `run_user` 执行用户态代码，直至任务调用 `exit` 或触发未处理异常。 |
-| `elf` | `os/src/elf.rs` | 校验当前架构的 ELF64 可执行镜像，提供用户入口、程序头表元信息及借用原镜像数据的加载段描述。 |
-| `user_stack` | `os/src/user_stack.rs` | 在调用方提供的字节缓冲区中构造 Linux 64 位初始栈，返回 16 字节对齐的用户栈指针。 |
+| `task::elf` | `os/src/task/elf.rs` | 校验当前架构的 ELF64 可执行镜像，提供用户入口、程序头表元信息及借用原镜像数据的加载段描述。 |
+| `task::user_stack` | `os/src/task/user_stack.rs` | 在调用方提供的字节缓冲区中构造 Linux 64 位初始栈，返回 16 字节对齐的用户栈指针。 |
 | `ktest` | `os/src/ktest/` | 启动期内核白盒自检框架（仅在启用 `ktest` feature 时参与编译），详见 [内核自检与测试验证](../testing/README.md)。 |
 
 ## 核心调用流

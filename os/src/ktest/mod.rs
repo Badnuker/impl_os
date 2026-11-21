@@ -20,11 +20,11 @@ const SUITES: &[Suite] = &[
     },
     Suite {
         name: "ELF64",
-        run: |_| crate::elf::tests::kernel_test(),
+        run: |_| crate::task::elf::tests::kernel_test(),
     },
     Suite {
         name: "initial user stack",
-        run: |_| crate::user_stack::tests::kernel_test(),
+        run: |_| crate::task::user_stack::tests::kernel_test(),
     },
     Suite {
         name: "heap",

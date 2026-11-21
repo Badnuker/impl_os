@@ -150,5 +150,5 @@ fn push_word(words: &mut &mut [u8], value: usize) {
 }
 
 #[cfg(feature = "ktest")]
-#[path = "ktest/user_stack.rs"]
+#[path = "../ktest/user_stack.rs"]
 pub(crate) mod tests;

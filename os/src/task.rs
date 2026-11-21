@@ -1,8 +1,15 @@
-//! 单核关中断环境下的最小用户任务执行循环。
+//! 用户任务启动数据准备与单核关中断环境下的最小执行循环。
 //!
 //! [`Task`] 仅封装一个用户态整数上下文（[`TrapContext`]）及其运行状态机，
 //! 暂不持有独立的内核栈或用户地址空间。调用方需先准备好用户代码与栈映射，
 //! 再调用 [`Task::run`] 同步执行用户程序，直到任务调用 `exit` 或触发未处理异常。
+//!
+//! [`elf`] 和 [`user_stack`] 分别解析用户程序镜像、构造初始用户栈，不建立映射。
+
+#[cfg_attr(not(feature = "ktest"), allow(dead_code))] // 接入装载流程前仅由 ktest 调用。
+pub(crate) mod elf;
+#[cfg_attr(not(feature = "ktest"), allow(dead_code))] // 接入装载流程前仅由 ktest 调用。
+pub(crate) mod user_stack;
 
 use crate::arch::trap::{run_user, TrapContext};
 use crate::syscall::{self, Outcome};
