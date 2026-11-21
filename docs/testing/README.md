@@ -24,9 +24,9 @@ just test rv debug   # 运行 RISC-V (debug) 自检
 
 ### 组织方式与设计约定
 
-- **零生产侵入**：`ktest` 仅在启用 `--features ktest` 时参与编译。正常启动流程完成日志、Trap 和内存分配器初始化后，将 `FrameAllocator` 的共享引用传给 `ktest::run(&frames)`。
+- **启动入口**：`ktest` 仅在启用 `--features ktest` 时参与编译。日志、Trap 和内存分配器初始化后，启动入口调用无参数的 `ktest::run()`；需要真实页框的套件通过 `mm::frames()` 借用全局分配器。
 - **目录与白盒访问**：所有测试代码与专用汇编探针统一存放在 `os/src/ktest/` 下，按被测模块组织，再由被测模块通过 `#[cfg(feature = "ktest")] #[path = "..."] mod tests;` 挂载。这样既保持了业务源码目录的整洁，又允许测试直接访问模块内部私有项。
-- **顺序执行与状态恢复**：`ktest::run` 按 `SUITES` 数组顺序依次执行各测试套件。每个套件在返回前必须恢复临时修改的硬件状态（如 LoongArch 的 `DMW1` 窗口）并归还借用的物理页框。任何断言失败都会直接触发内核 panic 并停机；只有全部套件通过才会打印最终的 `<arch>: all kernel tests passed`。
+- **顺序执行与状态恢复**：`ktest::run` 按 `SUITES` 数组顺序依次调用各套件的无参数、无返回值入口。每个套件在返回前必须恢复临时修改的硬件状态（如 LoongArch 的 `DMW1` 窗口）并归还借用的物理页框。任何断言失败都会直接触发内核 panic 并停机；只有全部套件通过才会打印最终的 `<arch>: all kernel tests passed`。
 - **注意 LoongArch 退出方式**：LoongArch 尚未实现主动关机，打印 `loongarch64: all kernel tests passed` 后会停在 `idle` 循环（需按 `Ctrl-a x` 退出）。判断自检是否通过必须以串口输出的成功标记为准，不能仅看 QEMU 是否退出。
 
 ---
@@ -70,7 +70,22 @@ just test rv debug   # 运行 RISC-V (debug) 自检
 - **`FDT memory` & `boot FDT mapping`**：使用 [`os/src/ktest/support/fdt.rs`](../../os/src/ktest/support/fdt.rs) 独立编码生成的测试设备树，验证多段 RAM、`1`/`2` cell 宽度、`status = "disabled"` 节点跳过、`initrd` 保留、FDT 本体物理区间保留，对截断、块重叠、非法魔数/版本、动态保留区、超深嵌套（> 32 层）的错误拦截，以及对整份 DTB 逐字节按位取反（`^= 0xff`）时解析器绝不 panic。
 - **`boot tables`（仅 LoongArch）**：在合成的字节数组上验证 EFI 系统表签名、乱序 GUID 查找（FDT 与 initrd）、重复/缺失表项报错、地址越界拦截以及 `DMW0` 映射地址转换。
 
-### 3.4 用户程序装载准备测试（`ELF64`、`initial user stack`）
+### 3.4 RISC-V Sv39 页表测试（`Sv39 paging`）
+
+`just test rv` 和 `just test rv debug` 在物理页框测试后执行此测试组。测试与前序 Trap 测试的机器状态无关，源码及探针位于 [`os/src/ktest/arch/riscv64/paging/`](../../os/src/ktest/arch/riscv64/paging/)。
+
+- 软件映射覆盖同表多页、2 MiB / 1 GiB 分界、Sv39 正负规范地址边界、页内偏移、物理地址零和 56 位上界，并验证拒绝非规范地址、未对齐地址、非法权限和重复映射。
+- 解除映射验证共享表保留、空中间表立即回收、重复解除返回错误，以及销毁非空页表后页框数恢复。
+- 从真实页框借出 0 至 4 页建立小池，验证根表及中间分支耗尽、部分分配回滚、已有映射保持不变，避免耗尽启动分配器。
+- 临时启用 Sv39，恒等映射内核镜像、页表页和 UART，另映射独占用户代码、数据和栈页。用户探针读写数据及栈后通过 `exit` 返回；未映射读取、用户读取监管态页面、写只读代码及从不可执行数据页取指产生对应的用户页故障。
+- 返回后检查原 `satp` 和用户数据；将同一虚拟地址重新映射到另一物理页后激活，验证探针读到新物理页的值。
+- 嵌套激活按 `Bare → A → B → A → Bare` 切换，同一探针虚拟地址在 A、B 中映射到不同物理页。检查进入 B 前后的实际读值，以及退出 B 后完整 `satp` 与进入前一致；退出 A 后恢复 Bare。整组结束时页框数恢复。
+
+[QEMU 10.0.2](https://github.com/qemu/qemu/blob/v10.0.2/target/riscv/csr.c#L1918-L1941) 在有效的 `satp` 写入改变模式、ASID 或根页号时自动清空 TLB。上述用例验证映射结果和 `satp` 恢复；显式 `sfence.vma` 的回归验证需要在切换 `satp` 时保留缓存翻译的环境中另行执行。
+
+活动期间输出 `riscv64: Sv39 active`，通过后输出 `riscv64: Sv39 paging kernel tests passed`；整次自检仍以总成功标记为准。测试中的内核镜像使用监管态 RWX 临时映射，覆盖分页下的内核执行和固定用户探针，不代表最终内核权限布局，也不覆盖 LoongArch 页表、ELF 加载、通用用户地址空间、大页或多核失效。
+
+### 3.5 用户程序装载准备测试（`ELF64`、`initial user stack`）
 
 - **`ELF64`**：使用手工编码的最小 RISC-V / LoongArch ELF64 镜像，验证双架构机器号匹配与跨架构拒绝、多加载段数据切片与页内偏移、跨页 BSS 清零范围、权限位、空段与纯 BSS 段处理、入口指令对齐差异（RISC-V 允许 2 字节、LoongArch 要求 4 字节），以及 `PT_PHDR` 的优先选择与非法声明（重复、晚于 `PT_LOAD`、尺寸不符、被 BSS 截断）。同时覆盖坏魔数、非 64 位/大端/非 `ET_EXEC`/`PT_INTERP`、`PN_XNUM`、偏移未对齐、文件越界、乱序段、仅在页级重叠的加载段以及向上取整至页边界时的地址溢出。
 - **`initial user stack`**：验证非对齐栈顶下的 64 位字布局（`argc`、`argv`/`envp` 指针与空终止符、`auxv` 顺序与 `(AT_NULL, 0)`）、用户虚拟地址换算、字符串内容、零填充对齐区与 16 字节对齐的最终 `sp`；覆盖恰好匹配与差 1 字节的边界容量、空列表与空字符串，以及基址下溢、内嵌 `\0` 和传入 `AT_NULL` 等错误路径，并确认失败时缓冲区保持原样、成功时不改动 `sp` 以下区域。
